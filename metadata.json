@@ -1,0 +1,6 @@
+{
+  "name": "BeatCraft AI",
+  "description": "An AI-powered music production and beat maker app featuring a real-time procedural synthesizer, multi-genre beat generation, custom VST plugins, a step sequencer, and multi-format audio exporting.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
