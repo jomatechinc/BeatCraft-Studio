@@ -36,14 +36,19 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.input.key.*
+import androidx.compose.ui.focus.*
 import com.example.ui.theme.*
 import com.example.viewmodel.BeatViewModel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import kotlin.math.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -2166,6 +2171,311 @@ fun StudioScreen(viewModel: BeatViewModel, modifier: Modifier = Modifier) {
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+
+        // --- 5C. Live Performance Tap Pad Controller ---
+        item {
+            val isRecording by viewModel.isLiveRecording.collectAsState()
+            val noteRepeat by viewModel.noteRepeatRate.collectAsState()
+            val padMode by viewModel.activePadMode.collectAsState()
+            val sampleAssignments by viewModel.sampleAssignments.collectAsState()
+            val currentTempo by viewModel.synthesizer.tempoBpm.collectAsState()
+            
+            val coroutineScope = rememberCoroutineScope()
+            
+            // Calculate note repeat interval in ms
+            val repeatIntervalMs = remember(currentTempo, noteRepeat) {
+                val beatMs = 60000.0 / currentTempo.coerceAtLeast(1)
+                when (noteRepeat) {
+                    "1/8" -> (beatMs / 2.0).toLong()
+                    "1/16" -> (beatMs / 4.0).toLong()
+                    "1/32" -> (beatMs / 8.0).toLong()
+                    else -> 0L
+                }
+            }
+
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("tap_pads_card"),
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = CosmicSurface)
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    // Header Row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Icon(
+                                    imageVector = Icons.Default.GridOn,
+                                    contentDescription = "Tap Pads",
+                                    tint = NeonMagenta,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Text(
+                                    text = "LIVE PERFORMANCE TAP PADS",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = TextPrimary,
+                                    letterSpacing = 1.sp
+                                )
+                            }
+                            Text(
+                                text = "Trigger drums, sound effects & loops in real-time.",
+                                fontSize = 11.sp,
+                                color = TextSecondary
+                            )
+                        }
+
+                        // Live Recording Toggle Button
+                        Button(
+                            onClick = { viewModel.toggleLiveRecording() },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isRecording) Color(0xFFE57373) else CosmicSurfaceVariant,
+                                contentColor = if (isRecording) Color.Black else TextPrimary
+                            ),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                            modifier = Modifier.testTag("live_record_toggle")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.FiberManualRecord,
+                                contentDescription = "Record",
+                                tint = if (isRecording) Color.Black else Color.Red,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = if (isRecording) "RECORDING" else "LIVE REC",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    // Mode Selection & Note Repeat Selection
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Pad Mode Selection Row
+                        Row(
+                            modifier = Modifier
+                                .weight(1.3f)
+                                .background(CosmicSurfaceVariant, RoundedCornerShape(8.dp))
+                                .padding(2.dp),
+                            horizontalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            listOf("Drums", "Samples").forEach { mode ->
+                                val active = padMode == mode
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .background(
+                                            if (active) ElectricViolet else Color.Transparent,
+                                            RoundedCornerShape(6.dp)
+                                        )
+                                        .clickable { viewModel.setPadMode(mode) }
+                                        .padding(vertical = 8.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = mode.uppercase(),
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (active) NeonCyan else TextSecondary
+                                    )
+                                }
+                            }
+                        }
+
+                        // Note Repeat Selector
+                        Row(
+                            modifier = Modifier
+                                .weight(1.7f)
+                                .background(CosmicSurfaceVariant, RoundedCornerShape(8.dp))
+                                .padding(2.dp),
+                            horizontalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            listOf("Off", "1/8", "1/16", "1/32").forEach { rate ->
+                                val active = noteRepeat == rate
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .background(
+                                            if (active) ElectricViolet else Color.Transparent,
+                                            RoundedCornerShape(6.dp)
+                                        )
+                                        .clickable { viewModel.setNoteRepeatRate(rate) }
+                                        .padding(vertical = 8.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = rate,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (active) NeonCyan else TextSecondary
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    if (noteRepeat != "Off") {
+                        Text(
+                            text = "Note Repeat Active at $noteRepeat rate (${repeatIntervalMs}ms intervals). Hold pad to roll/arpeggiate.",
+                            fontSize = 10.sp,
+                            color = NeonAmber,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+
+                    // 3x2 Performance Pad Grid
+                    val pads = if (padMode == "Drums") {
+                        listOf(
+                            Triple("KICK", NeonCyan, "C2"),
+                            Triple("SNARE", NeonMagenta, "C2"),
+                            Triple("HI-HAT", NeonAmber, "C2"),
+                            Triple("PERCUSSION", NeonCyan, "C2"),
+                            Triple("SUB BASS", NeonMagenta, "C2"),
+                            Triple("LEAD SYNTH", NeonAmber, "C4")
+                        )
+                    } else {
+                        listOf(
+                            Triple("VOX HEY", NeonCyan, "VOX_HEY"),
+                            Triple("VOX AHH", NeonMagenta, "VOX_AHH"),
+                            Triple("SIREN FX", NeonAmber, "SIREN_FX"),
+                            Triple("LASER FX", NeonCyan, "LASER_FX"),
+                            Triple("SUB DROP", NeonMagenta, "SUB_DROP"),
+                            Triple("CHIP RISER", NeonAmber, "CHIP_RISER")
+                        )
+                    }
+
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        for (row in 0..1) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                for (col in 0..2) {
+                                    val index = row * 3 + col
+                                    val pad = pads[index]
+                                    val label = pad.first
+                                    val color = pad.second
+                                    val soundId = pad.third
+
+                                    var isPadPressed by remember { mutableStateOf(false) }
+
+                                    Card(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(85.dp)
+                                            .testTag("performance_pad_$index")
+                                            .pointerInput(padMode, soundId, repeatIntervalMs) {
+                                                detectTapGestures(
+                                                    onPress = {
+                                                        isPadPressed = true
+                                                        viewModel.triggerLivePad(index)
+                                                        
+                                                        if (repeatIntervalMs > 0) {
+                                                            val job = coroutineScope.launch {
+                                                                while (isPadPressed) {
+                                                                    delay(repeatIntervalMs)
+                                                                    viewModel.triggerLivePad(index)
+                                                                }
+                                                            }
+                                                            try {
+                                                                awaitRelease()
+                                                            } finally {
+                                                                isPadPressed = false
+                                                                job.cancel()
+                                                            }
+                                                        } else {
+                                                            awaitRelease()
+                                                            isPadPressed = false
+                                                        }
+                                                    }
+                                                )
+                                            },
+                                        shape = RoundedCornerShape(12.dp),
+                                        colors = CardDefaults.cardColors(
+                                            containerColor = if (isPadPressed) color.copy(alpha = 0.35f) else CosmicSurfaceVariant
+                                        ),
+                                        border = BorderStroke(
+                                            width = 1.5.dp,
+                                            color = if (isPadPressed) color else color.copy(alpha = 0.2f)
+                                        )
+                                    ) {
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .padding(8.dp),
+                                            verticalArrangement = Arrangement.SpaceBetween,
+                                            horizontalAlignment = Alignment.Start
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = "PAD 0${index + 1}",
+                                                    fontSize = 9.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = TextMuted
+                                                )
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(8.dp)
+                                                        .background(
+                                                            if (isPadPressed) color else color.copy(alpha = 0.3f),
+                                                            CircleShape
+                                                        )
+                                                )
+                                            }
+
+                                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                                Text(
+                                                    text = label,
+                                                    fontWeight = FontWeight.ExtraBold,
+                                                    fontSize = 11.sp,
+                                                    color = if (isPadPressed) color else TextPrimary
+                                                )
+                                                Text(
+                                                    text = if (padMode == "Drums") "TRIGGER" else "FX SYNTH",
+                                                    fontSize = 8.sp,
+                                                    fontWeight = FontWeight.Medium,
+                                                    color = TextSecondary
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Sample reassignment panel description
+                    if (padMode == "Samples") {
+                        Text(
+                            text = "Sample triggering uses real-time dynamic sound-design algorithms to synthesize unique organic vocal formants and effects instantly on touch.",
+                            fontSize = 10.sp,
+                            color = TextSecondary,
+                            style = TextStyle(fontStyle = FontStyle.Italic)
+                        )
                     }
                 }
             }

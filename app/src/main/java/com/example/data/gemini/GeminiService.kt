@@ -334,7 +334,129 @@ object GeminiService {
             return@withContext null
         }
     }
+
+    suspend fun generateChordProgression(
+        genre: String,
+        musicalKey: String,
+        style: String
+    ): ChordProgression? = withContext(Dispatchers.IO) {
+        val apiKey = BuildConfig.GEMINI_API_KEY
+        if (apiKey.isEmpty() || apiKey == "MY_GEMINI_API_KEY") {
+            Log.e(TAG, "API Key is empty or placeholder!")
+            return@withContext null
+        }
+
+        val prompt = """
+            Genre: $genre
+            Key: $musicalKey
+            Style: $style
+        """.trimIndent()
+
+        val systemInstruction = """
+            You are a master of music theory, jazz harmony, and beat composition.
+            Generate a professional, catchy chord progression and note arrangement for the given genre, key, and style.
+            Your output must be a raw JSON object containing:
+            1. "title": A descriptive title of the progression (e.g., "Ambitious Neo-Soul Turnaround", "Summer Afro-Reggae Loop").
+            2. "roman_numerals": The standard Roman numeral analysis (e.g., "ii7 - V7 - Imaj7 - VI7").
+            3. "description": A professional, 1-sentence description explaining why this progression works for the selected genre.
+            4. "bass_steps": A JSON array of exactly 16 elements. Each element must be a note like "C1", "D1", "E1", "F1", "G1", "A1", "B1" (with pitch/octave 1 or 2) representing 16 sequencer steps. Silent steps should be "-".
+            5. "synth_steps": A JSON array of exactly 16 elements. Each element must be a note like "C3", "E3", "G3", "C4" (with pitch/octave 3, 4, or 5) representing 16 sequencer steps. Silent steps should be "-".
+
+            Ensure notes are in key and sound harmonically coherent when played together. Make sure there are a reasonable number of silent steps (e.g. 4-8 silent steps marked as "-") so the groove is not overcrowded.
+            Do not wrap the JSON in Markdown backticks. Output raw JSON only.
+        """.trimIndent()
+
+        val requestJson = JSONObject().apply {
+            val contentsArray = JSONArray().apply {
+                val contentObj = JSONObject().apply {
+                    val partsArray = JSONArray().apply {
+                        val partObj = JSONObject().apply {
+                            put("text", prompt)
+                        }
+                        put(partObj)
+                    }
+                    put("parts", partsArray)
+                }
+                put(contentObj)
+            }
+            put("contents", contentsArray)
+
+            val generationConfig = JSONObject().apply {
+                put("responseMimeType", "application/json")
+                put("temperature", 0.6)
+            }
+            put("generationConfig", generationConfig)
+
+            val systemInstructionObj = JSONObject().apply {
+                val partsArray = JSONArray().apply {
+                    val partObj = JSONObject().apply {
+                        put("text", systemInstruction)
+                    }
+                    put(partObj)
+                }
+                put("parts", partsArray)
+            }
+            put("systemInstruction", systemInstructionObj)
+        }
+
+        val requestBody = requestJson.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
+
+        val request = Request.Builder()
+            .url("$ENDPOINT?key=$apiKey")
+            .post(requestBody)
+            .build()
+
+        try {
+            val response = client.newCall(request).execute()
+            val responseString = response.body?.string() ?: ""
+            if (!response.isSuccessful) {
+                Log.e(TAG, "Error in generateChordProgression: ${response.code} - $responseString")
+                return@withContext null
+            }
+
+            val root = JSONObject(responseString)
+            val candidates = root.getJSONArray("candidates")
+            val firstCandidate = candidates.getJSONObject(0)
+            val content = firstCandidate.getJSONObject("content")
+            val parts = content.getJSONArray("parts")
+            val textJson = parts.getJSONObject(0).getString("text")
+
+            val json = JSONObject(textJson)
+            val bassArray = json.getJSONArray("bass_steps")
+            val bassList = mutableListOf<String>()
+            for (i in 0 until bassArray.length()) {
+                bassList.add(bassArray.getString(i))
+            }
+            while (bassList.size < 16) bassList.add("-")
+
+            val synthArray = json.getJSONArray("synth_steps")
+            val synthList = mutableListOf<String>()
+            for (i in 0 until synthArray.length()) {
+                synthList.add(synthArray.getString(i))
+            }
+            while (synthList.size < 16) synthList.add("-")
+
+            return@withContext ChordProgression(
+                title = json.optString("title", "AI Chord Progression"),
+                romanNumerals = json.optString("roman_numerals", "I - IV - V - I"),
+                description = json.optString("description", ""),
+                bassSteps = bassList.take(16),
+                synthSteps = synthList.take(16)
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Exception during generateChordProgression", e)
+            return@withContext null
+        }
+    }
 }
+
+data class ChordProgression(
+    val title: String,
+    val romanNumerals: String,
+    val description: String,
+    val bassSteps: List<String>,
+    val synthSteps: List<String>
+)
 
 data class BeatPreset(
     val name: String,

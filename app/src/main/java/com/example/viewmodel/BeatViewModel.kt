@@ -88,6 +88,87 @@ class BeatViewModel(application: Application) : AndroidViewModel(application) {
     )
     val shortcuts: StateFlow<Map<String, String>> = _shortcuts
 
+    // Live Tap Pad Controller States
+    private val _isLiveRecording = MutableStateFlow(false)
+    val isLiveRecording: StateFlow<Boolean> = _isLiveRecording
+
+    private val _noteRepeatRate = MutableStateFlow("Off") // "Off", "1/8", "1/16", "1/32"
+    val noteRepeatRate: StateFlow<String> = _noteRepeatRate
+
+    private val _activePadMode = MutableStateFlow("Drums") // "Drums", "Samples"
+    val activePadMode: StateFlow<String> = _activePadMode
+
+    private val _sampleAssignments = MutableStateFlow(
+        mapOf(
+            0 to "VOX_HEY",
+            1 to "VOX_AHH",
+            2 to "SIREN_FX",
+            3 to "LASER_FX",
+            4 to "SUB_DROP",
+            5 to "CHIP_RISER"
+        )
+    )
+    val sampleAssignments: StateFlow<Map<Int, String>> = _sampleAssignments
+
+    fun toggleLiveRecording() {
+        _isLiveRecording.value = !_isLiveRecording.value
+    }
+
+    fun setNoteRepeatRate(rate: String) {
+        _noteRepeatRate.value = rate
+    }
+
+    fun setPadMode(mode: String) {
+        _activePadMode.value = mode
+    }
+
+    fun assignSampleToPad(padIndex: Int, sampleType: String) {
+        val current = _sampleAssignments.value.toMutableMap()
+        current[padIndex] = sampleType
+        _sampleAssignments.value = current
+    }
+
+    fun triggerLivePad(padIndex: Int) {
+        val mode = _activePadMode.value
+        if (mode == "Drums") {
+            val track = when (padIndex) {
+                0 -> "KICK"
+                1 -> "SNARE"
+                2 -> "HIHAT"
+                3 -> "PERC"
+                4 -> "BASS"
+                5 -> "SYNTH"
+                else -> "KICK"
+            }
+            // Trigger sound
+            if (track == "BASS") {
+                synthesizer.triggerLiveSound("BASS", "C2")
+            } else if (track == "SYNTH") {
+                synthesizer.triggerLiveSound("SYNTH", "C4")
+            } else {
+                synthesizer.triggerLiveSound(track)
+            }
+
+            // Record if recording is active
+            if (_isLiveRecording.value) {
+                val step = synthesizer.currentStep.value
+                when (track) {
+                    "KICK" -> synthesizer.kickSteps[step] = true
+                    "SNARE" -> synthesizer.snareSteps[step] = true
+                    "HIHAT" -> synthesizer.hihatSteps[step] = true
+                    "PERC" -> synthesizer.percussionSteps[step] = true
+                    "BASS" -> synthesizer.bassSteps[step] = "C2"
+                    "SYNTH" -> synthesizer.synthSteps[step] = "C4"
+                }
+                autoSave()
+            }
+        } else {
+            // Samples mode
+            val sampleType = _sampleAssignments.value[padIndex] ?: "VOX_HEY"
+            synthesizer.triggerSampleSound(sampleType)
+        }
+    }
+
     // AI Mastering Assistant States
     private val _masteringLoading = MutableStateFlow(false)
     val masteringLoading: StateFlow<Boolean> = _masteringLoading
@@ -256,6 +337,129 @@ class BeatViewModel(application: Application) : AndroidViewModel(application) {
                 _aiStatusMessage.value = "Failed to sync project."
             }
         }
+    }
+
+    // Stem Export States
+    private val _stemExportLoading = MutableStateFlow(false)
+    val stemExportLoading: StateFlow<Boolean> = _stemExportLoading
+
+    fun exportStems(format: String = "WAV") {
+        viewModelScope.launch {
+            _stemExportLoading.value = true
+            _aiStatusMessage.value = "Rendering tracks as separate stems (Drums, Bass, Synths, Vocals)..."
+
+            val currentSnapshot = ProjectEntity(
+                name = _currentProjectName.value,
+                genre = synthesizer.genre.value,
+                bpm = synthesizer.tempoBpm.value,
+                durationMin = synthesizer.durationMin.value,
+                kickSteps = synthesizer.kickSteps.map { if (it) '1' else '0' }.joinToString(""),
+                snareSteps = synthesizer.snareSteps.map { if (it) '1' else '0' }.joinToString(""),
+                hihatSteps = synthesizer.hihatSteps.map { if (it) '1' else '0' }.joinToString(""),
+                percussionSteps = synthesizer.percussionSteps.map { if (it) '1' else '0' }.joinToString(""),
+                bassSteps = synthesizer.bassSteps.joinToString(","),
+                synthSteps = synthesizer.synthSteps.joinToString(","),
+                kickVolume = synthesizer.kickVolume,
+                snareVolume = synthesizer.snareVolume,
+                hihatVolume = synthesizer.hihatVolume,
+                bassVolume = synthesizer.bassVolume,
+                synthVolume = synthesizer.synthVolume,
+                percussionVolume = synthesizer.percussionVolume,
+                delayLevel = synthesizer.delayLevel,
+                reverbLevel = synthesizer.reverbLevel,
+                filterCutoff = synthesizer.filterCutoff,
+                kickAutomation = synthesizer.automationCurves.value["KICK"]?.joinToString(",") ?: "1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0",
+                snareAutomation = synthesizer.automationCurves.value["SNARE"]?.joinToString(",") ?: "1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0",
+                hihatAutomation = synthesizer.automationCurves.value["HIHAT"]?.joinToString(",") ?: "1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0",
+                percussionAutomation = synthesizer.automationCurves.value["PERC"]?.joinToString(",") ?: "1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0",
+                bassAutomation = synthesizer.automationCurves.value["BASS"]?.joinToString(",") ?: "1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0",
+                synthAutomation = synthesizer.automationCurves.value["SYNTH"]?.joinToString(",") ?: "1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0"
+            )
+
+            try {
+                val files = AudioExporter.exportStems(
+                    context = getApplication(),
+                    project = currentSnapshot,
+                    format = format,
+                    durationSec = 15
+                )
+
+                if (files.isNotEmpty()) {
+                    files.forEach { file ->
+                        val recording = RecordingEntity(
+                            fileName = file.name,
+                            filePath = file.absolutePath,
+                            format = format,
+                            durationSec = synthesizer.durationMin.value * 60,
+                            tag = "Stem",
+                            genre = synthesizer.genre.value
+                        )
+                        repository.saveRecording(recording)
+                    }
+                    _aiStatusMessage.value = "Stems rendered successfully! ${files.size} stems saved to directory."
+                } else {
+                    _aiStatusMessage.value = "Failed to render stems."
+                }
+            } catch (e: Exception) {
+                Log.e("BeatViewModel", "Failed to export stems", e)
+                _aiStatusMessage.value = "Error rendering stems: ${e.localizedMessage}"
+            } finally {
+                _stemExportLoading.value = false
+            }
+        }
+    }
+
+    // Chord Progression AI States
+    private val _chordAiLoading = MutableStateFlow(false)
+    val chordAiLoading: StateFlow<Boolean> = _chordAiLoading
+
+    private val _generatedChordProgression = MutableStateFlow<com.example.data.gemini.ChordProgression?>(null)
+    val generatedChordProgression: StateFlow<com.example.data.gemini.ChordProgression?> = _generatedChordProgression
+
+    private val _chordAiError = MutableStateFlow<String?>(null)
+    val chordAiError: StateFlow<String?> = _chordAiError
+
+    fun generateChordProgression(genre: String, musicalKey: String, style: String) {
+        if (_isOfflineMode.value) {
+            _chordAiError.value = "Chord AI is not available in offline mode."
+            return
+        }
+        _chordAiLoading.value = true
+        _chordAiError.value = null
+        _generatedChordProgression.value = null
+
+        viewModelScope.launch {
+            try {
+                val progression = GeminiService.generateChordProgression(genre, musicalKey, style)
+                if (progression != null) {
+                    _generatedChordProgression.value = progression
+                    _aiStatusMessage.value = "AI generated chord progression: ${progression.romanNumerals}"
+                } else {
+                    _chordAiError.value = "Failed to generate chord progression. Please verify API key."
+                }
+            } catch (e: Exception) {
+                Log.e("BeatViewModel", "Chord AI generation failed", e)
+                _chordAiError.value = "Error generating chord progression: ${e.localizedMessage}"
+            } finally {
+                _chordAiLoading.value = false
+            }
+        }
+    }
+
+    fun applyChordProgression(progression: com.example.data.gemini.ChordProgression) {
+        viewModelScope.launch {
+            for (i in 0..15) {
+                synthesizer.bassSteps[i] = progression.bassSteps.getOrElse(i) { "-" }
+                synthesizer.synthSteps[i] = progression.synthSteps.getOrElse(i) { "-" }
+            }
+            autoSave()
+            _aiStatusMessage.value = "Applied '${progression.title}' to Bass and Synth channels!"
+        }
+    }
+
+    fun clearChordAiState() {
+        _generatedChordProgression.value = null
+        _chordAiError.value = null
     }
 
     // Export Beat to standard files (.wav, .mp3, etc.)

@@ -20,6 +20,230 @@ class BeatSynthesizer {
     private var playbackJob: Job? = null
     private val scope = CoroutineScope(Dispatchers.Default)
 
+    // Real-time live triggers for MIDI/Keyboard mapping
+    val liveKickTrigger = java.util.concurrent.atomic.AtomicBoolean(false)
+    val liveSnareTrigger = java.util.concurrent.atomic.AtomicBoolean(false)
+    val liveHihatTrigger = java.util.concurrent.atomic.AtomicBoolean(false)
+    val livePercTrigger = java.util.concurrent.atomic.AtomicBoolean(false)
+    val liveBassQueue = java.util.concurrent.ConcurrentLinkedQueue<Double>()
+    val liveSynthQueue = java.util.concurrent.ConcurrentLinkedQueue<Double>()
+    val liveSampleTrigger = java.util.concurrent.atomic.AtomicReference<String>(null)
+
+    fun triggerSampleSound(sampleType: String) {
+        if (_isPlaying.value) {
+            liveSampleTrigger.set(sampleType)
+        } else {
+            playPreviewSample(sampleType)
+        }
+    }
+
+    private fun playPreviewSample(sampleType: String) {
+        scope.launch {
+            val sampleRate = 44100
+            val durationSec = when (sampleType) {
+                "VOX_HEY" -> 0.25
+                "VOX_AHH" -> 0.6
+                "SIREN_FX" -> 1.0
+                "LASER_FX" -> 0.2
+                "SUB_DROP" -> 1.5
+                "CHIP_RISER" -> 1.2
+                else -> 0.5
+            }
+            val totalSamples = (sampleRate * durationSec).toInt()
+            val shortBuffer = ShortArray(totalSamples * 2)
+            val random = java.util.Random()
+            var localPhase = 0.0
+
+            for (s in 0 until totalSamples) {
+                val time = s / sampleRate.toDouble()
+                var sample = 0.0f
+                when (sampleType) {
+                    "VOX_HEY" -> {
+                        val f1 = sin(2.0 * Math.PI * 220.0 * time) * exp(-time / 0.04)
+                        val f2 = sin(2.0 * Math.PI * 880.0 * time) * exp(-time / 0.06)
+                        val f3 = sin(2.0 * Math.PI * 1300.0 * time) * exp(-time / 0.08)
+                        val noise = (random.nextFloat() * 2.0f - 1.0f) * exp(-time / 0.03) * 0.4f
+                        sample = ((f1 * 0.4 + f2 * 0.3 + f3 * 0.2) * exp(-time / 0.1) * 0.6 + noise).toFloat() * 0.8f
+                    }
+                    "VOX_AHH" -> {
+                        val f1 = sin(2.0 * Math.PI * 400.0 * time)
+                        val f2 = sin(2.0 * Math.PI * 800.0 * time) * 0.5
+                        val f3 = sin(2.0 * Math.PI * 1200.0 * time) * 0.25
+                        val vibrato = 1.0 + 0.02 * sin(2.0 * Math.PI * 6.0 * time)
+                        val wave = (f1 + f2 + f3) * vibrato
+                        val env = exp(-time / 0.2).toFloat()
+                        sample = (wave * env * 0.45f).toFloat()
+                    }
+                    "SIREN_FX" -> {
+                        val sweepSpeed = 8.0
+                        val currentFreq = 600.0 + 300.0 * sin(2.0 * Math.PI * sweepSpeed * time)
+                        localPhase += (2.0 * Math.PI * currentFreq / sampleRate)
+                        val env = if (time < 0.8) 1.0 else (1.0 - (time - 0.8) / 0.2)
+                        sample = (sin(localPhase) * env * 0.35f).toFloat()
+                    }
+                    "LASER_FX" -> {
+                        val currentFreq = 80.0 + 2200.0 * exp(-time / 0.04)
+                        localPhase += (2.0 * Math.PI * currentFreq / sampleRate)
+                        val env = exp(-time / 0.08).toFloat()
+                        sample = (sin(localPhase) * env * 0.4f).toFloat()
+                    }
+                    "SUB_DROP" -> {
+                        val currentFreq = 30.0 + 100.0 * exp(-time / 0.35)
+                        localPhase += (2.0 * Math.PI * currentFreq / sampleRate)
+                        val env = exp(-time / 0.45).toFloat()
+                        sample = (sin(localPhase) * env * 0.75f).toFloat()
+                    }
+                    "CHIP_RISER" -> {
+                        val currentFreq = 200.0 + 1400.0 * (time / durationSec)
+                        localPhase += (2.0 * Math.PI * currentFreq / sampleRate)
+                        val wave = if (sin(localPhase) > 0.0) 1.0 else -1.0
+                        val env = (time / durationSec).toFloat() * (1f - (time / durationSec).toFloat()) * 4f
+                        sample = (wave * env * 0.22f).toFloat()
+                    }
+                }
+                
+                sample = sample.coerceIn(-1.0f, 1.0f)
+                val outShort = (sample * 32767.0f).toInt().toShort()
+                shortBuffer[s * 2] = outShort
+                shortBuffer[s * 2 + 1] = outShort
+            }
+
+            try {
+                val tempTrack = AudioTrack(
+                    AudioManager.STREAM_MUSIC,
+                    sampleRate,
+                    AudioFormat.CHANNEL_OUT_STEREO,
+                    AudioFormat.ENCODING_PCM_16BIT,
+                    shortBuffer.size * 2,
+                    AudioTrack.MODE_STATIC
+                )
+                tempTrack.write(shortBuffer, 0, shortBuffer.size)
+                tempTrack.play()
+                kotlinx.coroutines.delay((durationSec * 1000).toLong() + 100)
+                tempTrack.stop()
+                tempTrack.release()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    fun triggerLiveSound(track: String, note: String = "C4") {
+        if (_isPlaying.value) {
+            when (track) {
+                "KICK" -> liveKickTrigger.set(true)
+                "SNARE" -> liveSnareTrigger.set(true)
+                "HIHAT" -> liveHihatTrigger.set(true)
+                "PERC" -> livePercTrigger.set(true)
+                "BASS" -> {
+                    val freq = noteToFreq(note)
+                    if (freq > 0.0) liveBassQueue.add(freq)
+                }
+                "SYNTH" -> {
+                    val freq = noteToFreq(note)
+                    if (freq > 0.0) liveSynthQueue.add(freq)
+                }
+            }
+        } else {
+            playPreviewSound(track, note)
+        }
+    }
+
+    private fun playPreviewSound(track: String, note: String) {
+        scope.launch {
+            val sampleRate = 44100
+            val durationSec = when (track) {
+                "KICK" -> 0.15
+                "SNARE" -> 0.22
+                "HIHAT" -> 0.05
+                "PERC" -> 0.18
+                else -> 0.8
+            }
+            val totalSamples = (sampleRate * durationSec).toInt()
+            val shortBuffer = ShortArray(totalSamples * 2)
+            val random = java.util.Random()
+            val freq = noteToFreq(note)
+            
+            var kickPhaseLocal = 0.0
+            var bassPhaseLocal = 0.0
+            var bassEnvLocal = 1.0
+            var synthPhaseLocal = 0.0
+            var synthEnvLocal = 1.0
+
+            for (s in 0 until totalSamples) {
+                val time = s / sampleRate.toDouble()
+                var sample = 0.0f
+                when (track) {
+                    "KICK" -> {
+                        val currentFreq = 48.0 + (160.0 - 48.0) * exp(-time / 0.02)
+                        kickPhaseLocal += (2.0 * Math.PI * currentFreq / sampleRate)
+                        val amplitude = exp(-time / 0.04)
+                        sample = (sin(kickPhaseLocal) * amplitude * kickVolume).toFloat()
+                    }
+                    "SNARE" -> {
+                        val noise = (random.nextFloat() * 2.0f - 1.0f)
+                        val env = exp(-time / 0.05)
+                        val bodyVal = sin(2.0 * Math.PI * 180.0 * time) * exp(-time / 0.02)
+                        sample = ((noise * 0.7 + bodyVal * 0.3) * env * snareVolume).toFloat()
+                    }
+                    "HIHAT" -> {
+                        val noise = (random.nextFloat() * 2.0f - 1.0f)
+                        val env = exp(-time / 0.015)
+                        sample = (noise * env * hihatVolume).toFloat()
+                    }
+                    "PERC" -> {
+                        val percussionFreq = 600.0
+                        val car = sin(2.0 * Math.PI * percussionFreq * time)
+                        val mod = sin(2.0 * Math.PI * (percussionFreq * 1.41) * time)
+                        val env = exp(-time / 0.04)
+                        sample = (car * mod * env * percussionVolume).toFloat()
+                    }
+                    "BASS" -> {
+                        if (freq > 0.0 && bassEnvLocal > 0.01) {
+                            bassPhaseLocal += (2.0 * Math.PI * freq / sampleRate)
+                            val p = (bassPhaseLocal % (2.0 * Math.PI)) / (2.0 * Math.PI)
+                            val bassWave = if (p < 0.5) (4.0 * p - 1.0) else (3.0 - 4.0 * p)
+                            sample = (bassWave * bassEnvLocal * bassVolume).toFloat()
+                            bassEnvLocal *= 0.9998
+                        }
+                    }
+                    "SYNTH" -> {
+                        if (freq > 0.0 && synthEnvLocal > 0.01) {
+                            synthPhaseLocal += (2.0 * Math.PI * freq / sampleRate)
+                            val p = (synthPhaseLocal % (2.0 * Math.PI)) / (2.0 * Math.PI)
+                            val rawSynth = (2.0 * p - 1.0).toFloat()
+                            sample = (rawSynth * synthEnvLocal * synthVolume).toFloat()
+                            synthEnvLocal *= 0.9998
+                        }
+                    }
+                }
+                
+                sample = sample.coerceIn(-1.0f, 1.0f)
+                val outShort = (sample * 32767.0f).toInt().toShort()
+                shortBuffer[s * 2] = outShort
+                shortBuffer[s * 2 + 1] = outShort
+            }
+
+            try {
+                val tempTrack = AudioTrack(
+                    AudioManager.STREAM_MUSIC,
+                    sampleRate,
+                    AudioFormat.CHANNEL_OUT_STEREO,
+                    AudioFormat.ENCODING_PCM_16BIT,
+                    shortBuffer.size * 2,
+                    AudioTrack.MODE_STATIC
+                )
+                tempTrack.write(shortBuffer, 0, shortBuffer.size)
+                tempTrack.play()
+                kotlinx.coroutines.delay((durationSec * 1000).toLong() + 100)
+                tempTrack.stop()
+                tempTrack.release()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
     // Synthesizer State Exposed to UI
     private val _isPlaying = MutableStateFlow(false)
     val isPlaying: StateFlow<Boolean> = _isPlaying
@@ -310,6 +534,13 @@ class BeatSynthesizer {
     private var synthFreq = 0.0
     private var synthEnv = 0.0
     private var synthGlissandoFreq = 0.0
+
+    // Sample SFX trigger states
+    private var sampleSfxActive = false
+    private var sampleSfxType = "" // "VOX_HEY", "VOX_AHH", "SIREN_FX", "LASER_FX", "SUB_DROP", "CHIP_RISER"
+    private var sampleSfxTime = 0.0
+    private var sampleSfxPhase = 0.0
+    private var sampleSfxEnv = 0.0
 
     // Delay FX Buffer
     private val delayBufferSize = 22050 // ~0.5 second at 44.1kHz
@@ -738,6 +969,55 @@ class BeatSynthesizer {
                         stepIndex = (stepIndex + 1) % 16
                     }
 
+                    // Real-time Live Triggers
+                    if (liveKickTrigger.compareAndSet(true, false)) {
+                        kickActive = true
+                        kickTime = 0.0
+                        kickPhase = 0.0
+                        kickHumanVol = 1.0f
+                    }
+                    if (liveSnareTrigger.compareAndSet(true, false)) {
+                        snareActive = true
+                        snareTime = 0.0
+                        snareHumanVol = 1.0f
+                    }
+                    if (liveHihatTrigger.compareAndSet(true, false)) {
+                        hihatActive = true
+                        hihatTime = 0.0
+                        hihatHumanVol = 1.0f
+                    }
+                    if (livePercTrigger.compareAndSet(true, false)) {
+                        percussionActive = true
+                        percussionTime = 0.0
+                        percussionFreq = 500.0 + random.nextDouble() * 400.0
+                        percHumanVol = 1.0f
+                    }
+                    val liveBassFreqVal = liveBassQueue.poll()
+                    if (liveBassFreqVal != null) {
+                        bassFreq = liveBassFreqVal
+                        bassActive = true
+                        bassPhase = 0.0
+                        bassEnv = 1.0
+                        bassHumanVol = 1.0f
+                    }
+                    val liveSynthFreqVal = liveSynthQueue.poll()
+                    if (liveSynthFreqVal != null) {
+                        synthActive = true
+                        synthPhase = 0.0
+                        synthEnv = 1.0
+                        synthGlissandoFreq = if (synthFreq > 0.0) synthFreq else liveSynthFreqVal
+                        synthFreq = liveSynthFreqVal
+                        synthHumanVol = 1.0f
+                    }
+                    val liveSfx = liveSampleTrigger.getAndSet(null)
+                    if (liveSfx != null) {
+                        sampleSfxActive = true
+                        sampleSfxType = liveSfx
+                        sampleSfxTime = 0.0
+                        sampleSfxPhase = 0.0
+                        sampleSfxEnv = 1.0
+                    }
+
                     val humanVal = _humanizeLevel.value
 
                     // Consume Triggers on their specific delay samples
@@ -982,6 +1262,72 @@ class BeatSynthesizer {
                             synthEnv *= 0.99994
                         } else {
                             synthActive = false
+                        }
+                    }
+
+                    // 7. Custom Sample SFX Trigger
+                    if (sampleSfxActive) {
+                        val duration = when (sampleSfxType) {
+                            "VOX_HEY" -> 0.25
+                            "VOX_AHH" -> 0.6
+                            "SIREN_FX" -> 1.0
+                            "LASER_FX" -> 0.2
+                            "SUB_DROP" -> 1.5
+                            "CHIP_RISER" -> 1.2
+                            else -> 0.5
+                        }
+                        if (sampleSfxTime < duration) {
+                            var sample = 0.0f
+                            val time = sampleSfxTime
+                            when (sampleSfxType) {
+                                "VOX_HEY" -> {
+                                    val f1 = sin(2.0 * Math.PI * 220.0 * time) * exp(-time / 0.04)
+                                    val f2 = sin(2.0 * Math.PI * 880.0 * time) * exp(-time / 0.06)
+                                    val f3 = sin(2.0 * Math.PI * 1300.0 * time) * exp(-time / 0.08)
+                                    val noise = (random.nextFloat() * 2.0f - 1.0f) * exp(-time / 0.03) * 0.4f
+                                    sample = ((f1 * 0.4 + f2 * 0.3 + f3 * 0.2) * exp(-time / 0.1) * 0.6 + noise).toFloat() * 0.8f
+                                }
+                                "VOX_AHH" -> {
+                                    val f1 = sin(2.0 * Math.PI * 400.0 * time)
+                                    val f2 = sin(2.0 * Math.PI * 800.0 * time) * 0.5
+                                    val f3 = sin(2.0 * Math.PI * 1200.0 * time) * 0.25
+                                    val vibrato = 1.0 + 0.02 * sin(2.0 * Math.PI * 6.0 * time)
+                                    val wave = (f1 + f2 + f3) * vibrato
+                                    val env = exp(-time / 0.2).toFloat()
+                                    sample = (wave * env * 0.45f).toFloat()
+                                }
+                                "SIREN_FX" -> {
+                                    val sweepSpeed = 8.0
+                                    val currentFreq = 600.0 + 300.0 * sin(2.0 * Math.PI * sweepSpeed * time)
+                                    sampleSfxPhase += (2.0 * Math.PI * currentFreq / sampleRate)
+                                    val env = if (time < 0.8) 1.0 else (1.0 - (time - 0.8) / 0.2)
+                                    sample = (sin(sampleSfxPhase) * env * 0.35f).toFloat()
+                                }
+                                "LASER_FX" -> {
+                                    val currentFreq = 80.0 + 2200.0 * exp(-time / 0.04)
+                                    sampleSfxPhase += (2.0 * Math.PI * currentFreq / sampleRate)
+                                    val env = exp(-time / 0.08).toFloat()
+                                    sample = (sin(sampleSfxPhase) * env * 0.4f).toFloat()
+                                }
+                                "SUB_DROP" -> {
+                                    val currentFreq = 30.0 + 100.0 * exp(-time / 0.35)
+                                    sampleSfxPhase += (2.0 * Math.PI * currentFreq / sampleRate)
+                                    val env = exp(-time / 0.45).toFloat()
+                                    sample = (sin(sampleSfxPhase) * env * 0.75f).toFloat()
+                                }
+                                "CHIP_RISER" -> {
+                                    val currentFreq = 200.0 + 1400.0 * (time / duration)
+                                    sampleSfxPhase += (2.0 * Math.PI * currentFreq / sampleRate)
+                                    val wave = if (sin(sampleSfxPhase) > 0.0) 1.0 else -1.0
+                                    val env = (time / duration).toFloat() * (1f - (time / duration).toFloat()) * 4f
+                                    sample = (wave * env * 0.22f).toFloat()
+                                }
+                            }
+                            mixedL += sample
+                            mixedR += sample
+                            sampleSfxTime += (1.0 / sampleRate)
+                        } else {
+                            sampleSfxActive = false
                         }
                     }
 
