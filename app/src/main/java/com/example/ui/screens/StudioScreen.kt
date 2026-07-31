@@ -45,6 +45,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.focus.*
+import android.content.Intent
+import androidx.core.content.FileProvider
 import com.example.ui.theme.*
 import com.example.viewmodel.BeatViewModel
 import kotlinx.coroutines.launch
@@ -97,6 +99,8 @@ fun StudioScreen(viewModel: BeatViewModel, modifier: Modifier = Modifier) {
     val masteringError by viewModel.masteringError.collectAsState()
 
     // Local UI States
+    val lastExportedFile by viewModel.lastExportedFile.collectAsState()
+    var showTutorialModal by remember { mutableStateOf(false) }
     var masteringTargetGenre by remember(activeGenre) { mutableStateOf(activeGenre) }
     var showMasteringGenreMenu by remember { mutableStateOf(false) }
     var promptText by remember { mutableStateOf("") }
@@ -153,6 +157,19 @@ fun StudioScreen(viewModel: BeatViewModel, modifier: Modifier = Modifier) {
                             color = TextPrimary,
                             letterSpacing = 1.sp
                         )
+                        Spacer(modifier = Modifier.weight(1f))
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(CosmicSurfaceVariant)
+                                .clickable { showTutorialModal = true }
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Icon(Icons.Default.HelpOutline, contentDescription = "Help", tint = NeonCyan, modifier = Modifier.size(14.dp))
+                                Text("GUIDE", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = NeonCyan)
+                            }
+                        }
                         if (isOffline) {
                             Spacer(modifier = Modifier.weight(1f))
                             Badge(containerColor = NeonMagenta.copy(alpha = 0.2f)) {
@@ -2525,6 +2542,8 @@ fun StudioScreen(viewModel: BeatViewModel, modifier: Modifier = Modifier) {
 
                     // Format Selection Panel
                     val formats = listOf("WAV", "MP3", "FLAC", "AIFF")
+                    val context = LocalContext.current
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -2547,9 +2566,117 @@ fun StudioScreen(viewModel: BeatViewModel, modifier: Modifier = Modifier) {
                             }
                         }
                     }
+
+                    // System Share Intent Action Button
+                    Button(
+                        onClick = {
+                            val fileToShare = lastExportedFile
+                            val projectName = viewModel.currentProjectName.value
+                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                if (fileToShare != null && fileToShare.exists()) {
+                                    type = "audio/*"
+                                    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", fileToShare)
+                                    putExtra(Intent.EXTRA_STREAM, uri)
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                } else {
+                                    type = "text/plain"
+                                }
+                                putExtra(Intent.EXTRA_SUBJECT, "BeatCraft AI Track: $projectName")
+                                putExtra(Intent.EXTRA_TEXT, "Check out my beat '$projectName' created with BeatCraft AI!")
+                            }
+                            context.startActivity(Intent.createChooser(shareIntent, "Share Beat Audio"))
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("share_system_intent_button"),
+                        colors = ButtonDefaults.buttonColors(containerColor = ElectricViolet),
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(vertical = 12.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Icon(Icons.Default.Share, contentDescription = "Share", tint = NeonCyan, modifier = Modifier.size(18.dp))
+                            Text(
+                                text = if (lastExportedFile != null) "SHARE EXPORTED FILE (${lastExportedFile?.name})" else "SHARE BEAT INTENT",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = NeonCyan
+                            )
+                        }
+                    }
                 }
             }
         }
+    }
+
+    // --- Interactive Producer Tutorial & Quick Guide Modal ---
+    if (showTutorialModal) {
+        var tutorialStep by remember { mutableStateOf(0) }
+        val tutorialSteps = listOf(
+            Triple("1. STEP SEQUENCER GRID", "Tap steps in the 16-step grid to build drum loops for Kick, Snare, Hi-hat, Percussion, Bass & Lead Synth. Adjust individual track volume & panning sliders for pristine balance.", Icons.Default.GridOn),
+            Triple("2. LIVE TAP PADS & NOTE REPEAT", "Tap pressure-sensitive pads in real-time to trigger drum hits or vocal SFX samples. Enable Note Repeat (1/8, 1/16, 1/32) to perform rapid trap rolls or fills effortlessly.", Icons.Default.TouchApp),
+            Triple("3. AI ARCHITECT & CHORD AI", "Prompt Gemini AI in natural language to generate custom genre rhythms or harmonic chord progressions (e.g., '110 BPM Afrobeats with syncopated log drums').", Icons.Default.AutoAwesome),
+            Triple("4. MULTI-FORMAT EXPORT & SHARING", "Render your beat in 24-Bit WAV, MP3, FLAC or individual stems. Share exported tracks directly to social media or messaging apps using the native Android share intent.", Icons.Default.Share)
+        )
+
+        AlertDialog(
+            onDismissRequest = { showTutorialModal = false },
+            confirmButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (tutorialStep > 0) {
+                        TextButton(onClick = { tutorialStep-- }) { Text("PREVIOUS", color = TextSecondary) }
+                    }
+                    if (tutorialStep < tutorialSteps.size - 1) {
+                        Button(
+                            onClick = { tutorialStep++ },
+                            colors = ButtonDefaults.buttonColors(containerColor = ElectricViolet)
+                        ) {
+                            Text("NEXT", color = NeonCyan, fontWeight = FontWeight.Bold)
+                        }
+                    } else {
+                        Button(
+                            onClick = { showTutorialModal = false },
+                            colors = ButtonDefaults.buttonColors(containerColor = NeonCyan)
+                        ) {
+                            Text("START PRODUCING", color = Color.Black, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(tutorialSteps[tutorialStep].third, contentDescription = null, tint = NeonCyan)
+                    Text(tutorialSteps[tutorialStep].first, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        text = tutorialSteps[tutorialStep].second,
+                        fontSize = 12.sp,
+                        color = TextSecondary,
+                        lineHeight = 18.sp
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        tutorialSteps.forEachIndexed { idx, _ ->
+                            Box(
+                                modifier = Modifier
+                                    .padding(horizontal = 4.dp)
+                                    .size(8.dp)
+                                    .background(
+                                        if (idx == tutorialStep) NeonCyan else CosmicSurfaceVariant,
+                                        CircleShape
+                                    )
+                            )
+                        }
+                    }
+                }
+            },
+            containerColor = CosmicSurface,
+            titleContentColor = TextPrimary
+        )
     }
 
     // --- MIDI File Drag & Drop Sim Drawer Dialog ---

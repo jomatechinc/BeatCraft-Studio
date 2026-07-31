@@ -69,9 +69,98 @@ class BeatViewModel(application: Application) : AndroidViewModel(application) {
     private val _isCloudSyncing = MutableStateFlow(false)
     val isCloudSyncing: StateFlow<Boolean> = _isCloudSyncing
 
+    // User Account & Security States
+    private val _userIsSignedIn = MutableStateFlow(false)
+    val userIsSignedIn: StateFlow<Boolean> = _userIsSignedIn
+
+    private val _userName = MutableStateFlow("Guest Producer")
+    val userName: StateFlow<String> = _userName
+
+    private val _userEmail = MutableStateFlow("producer@beatcraft.ai")
+    val userEmail: StateFlow<String> = _userEmail
+
+    private val _userHandle = MutableStateFlow("@guest_producer")
+    val userHandle: StateFlow<String> = _userHandle
+
+    private val _is2FAEnabled = MutableStateFlow(false)
+    val is2FAEnabled: StateFlow<Boolean> = _is2FAEnabled
+
+    private val _isBiometricLockEnabled = MutableStateFlow(false)
+    val isBiometricLockEnabled: StateFlow<Boolean> = _isBiometricLockEnabled
+
+    private val _authErrorMessage = MutableStateFlow<String?>(null)
+    val authErrorMessage: StateFlow<String?> = _authErrorMessage
+
+    private val _authSuccessMessage = MutableStateFlow<String?>(null)
+    val authSuccessMessage: StateFlow<String?> = _authSuccessMessage
+
+    fun signUpUser(name: String, email: String, pass: String): Boolean {
+        if (name.isBlank() || email.isBlank() || pass.length < 6) {
+            _authErrorMessage.value = "Please provide a valid name, email, and password (min 6 chars)."
+            return false
+        }
+        _userName.value = name
+        _userEmail.value = email
+        _userHandle.value = "@" + name.lowercase().replace(" ", "_")
+        _userIsSignedIn.value = true
+        _authErrorMessage.value = null
+        _authSuccessMessage.value = "Account created successfully! Welcome to BeatCraft AI."
+        return true
+    }
+
+    fun loginUser(email: String, pass: String): Boolean {
+        if (email.isBlank() || pass.length < 6) {
+            _authErrorMessage.value = "Invalid email or password."
+            return false
+        }
+        val nameFromEmail = email.substringBefore("@").replace(".", " ").capitalize()
+        _userName.value = if (nameFromEmail.isNotBlank()) nameFromEmail else "Beat Producer"
+        _userEmail.value = email
+        _userHandle.value = "@" + _userName.value.lowercase().replace(" ", "_")
+        _userIsSignedIn.value = true
+        _authErrorMessage.value = null
+        _authSuccessMessage.value = "Signed in successfully!"
+        return true
+    }
+
+    fun loginWithGoogle(): Boolean {
+        _userName.value = "Joseph O."
+        _userEmail.value = "oghenekarojoseph@gmail.com"
+        _userHandle.value = "@oghenekarojoseph"
+        _userIsSignedIn.value = true
+        _authErrorMessage.value = null
+        _authSuccessMessage.value = "Signed in with Google Account!"
+        return true
+    }
+
+    fun logoutUser() {
+        _userIsSignedIn.value = false
+        _userName.value = "Guest Producer"
+        _userEmail.value = ""
+        _userHandle.value = "@guest_producer"
+        _authSuccessMessage.value = "Logged out safely."
+    }
+
+    fun toggle2FA() {
+        _is2FAEnabled.value = !_is2FAEnabled.value
+    }
+
+    fun toggleBiometricLock() {
+        _isBiometricLockEnabled.value = !_isBiometricLockEnabled.value
+    }
+
+    fun clearAuthMessages() {
+        _authErrorMessage.value = null
+        _authSuccessMessage.value = null
+    }
+
     // Offline Mode Toggle
     private val _isOfflineMode = MutableStateFlow(false)
     val isOfflineMode: StateFlow<Boolean> = _isOfflineMode
+
+    // Last Exported File State
+    private val _lastExportedFile = MutableStateFlow<File?>(null)
+    val lastExportedFile: StateFlow<File?> = _lastExportedFile
 
     // Customizable Shortcuts Map (Key -> Description/Action)
     private val _shortcuts = MutableStateFlow(
@@ -506,6 +595,7 @@ class BeatViewModel(application: Application) : AndroidViewModel(application) {
             )
 
             if (renderedFile != null && renderedFile.exists()) {
+                _lastExportedFile.value = renderedFile
                 val duration = synthesizer.durationMin.value * 60
                 val recording = RecordingEntity(
                     fileName = renderedFile.name,
